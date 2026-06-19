@@ -88,15 +88,19 @@ def find_arxiv_output_dir_fallback(
     base_output_dir: Path,
     *,
     arxiv_id: str | None = None,
-    sleep_s: float = 0.2,
+    sleep_s: float = 0.0,
 ) -> Path | None:
     """
     兜底：在无法差分/解析时，从名称含 ``-`` 的子目录中选择。
 
     优先含 ``YYYYMMDD-`` 前缀的目录，避免误选历史遗留的 ``Unknown-...``；
     若给定 ``arxiv_id``，优先唯一匹配「主文件名含该 ID」的目录。
+
+    注意：侧车文件与 JSON 行已能可靠定位输出目录，兜底通常无需等待；
+    ``sleep_s`` 仅保留给极端并发场景下显式调用方使用。
     """
-    time.sleep(sleep_s)
+    if sleep_s > 0:
+        time.sleep(sleep_s)
     possible = [
         d
         for d in base_output_dir.iterdir()

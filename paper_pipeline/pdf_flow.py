@@ -1,20 +1,27 @@
-"""PDF 流水线：MinerU → 格式化 → 翻译 → 整理输出。"""
+"""PDF 流水线：MinerU → 格式化 → 翻译 → 整理输出。
+
+同步入口保持向后兼容，核心逻辑已迁移到异步实现。
+"""
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 import sys
 from pathlib import Path
 
 from loguru import logger
 
+from paper_pipeline.arxiv_flow import async_translate_md
 from paper_pipeline.formatting import (
     MARKDOWN_FORMATTER_AVAILABLE,
+    async_format_markdown_file,
+    async_format_with_prettier,
     format_markdown_file,
     format_with_prettier,
 )
-from paper_pipeline.arxiv_flow import translate_md
 from paper_pipeline.subprocess_runner import run_external_command
+from paper_pipeline.translation_cache import TranslationCache
 from paper_pipeline.utils import get_ask_llm_dir
 
 
@@ -44,6 +51,11 @@ def parse_pdf_with_mineru(pdf_path: Path, *, quiet: bool) -> Path:
     if rc != 0:
         raise RuntimeError(f"MinerU 解析失败 (返回码: {rc})")
     return pdf_path.parent / f"{pdf_path.stem}_parsed"
+
+
+async def async_parse_pdf_with_mineru(pdf_path: Path, *, quiet: bool) -> Path:
+    """异步包装 MinerU 解析（子进程阻塞，扔到线程池）。"""
+    return await asyncio.to_thread(parse_pdf_with_mineru, pdf_path, quiet=quiet)
 
 
 def rename_full_md_to_pdf_name(
@@ -103,7 +115,7 @@ def cleanup_and_organize_pdf(
     logger.info(f"所有文件已整理到: {output_dir}")
 
 
-def process_single_pdf(
+async def async_process_single_pdf(
     pdf_path: Path,
     output_dir: Path,
     ask_llm_dir: Path | None,
@@ -115,7 +127,12 @@ def process_single_pdf(
     skip_cleanup: bool,
     yes: bool,
     quiet: bool,
+    *,
+    no_stream_api: bool = True,
+    cache: TranslationCache | None = None,
+    cache_salt: str = "default",
 ) -> dict:
+    """处理单个 PDF（异步核心实现）。"""
     result: dict = {
         "pdf": str(pdf_path),
         "success": False,
@@ -128,41 +145,65 @@ def process_single_pdf(
         logger.info(f"开始处理 PDF: {pdf_path.name}")
 
         pdf_path = rename_pdf_spaces_to_dashes(pdf_path, yes=yes)
-        parsed_dir = parse_pdf_with_mineru(pdf_path, quiet=quiet)
+        parsed_dir = await async_parse_pdf_with_mineru(pdf_path, quiet=quiet)
 
         if not parsed_dir.exists():
             raise RuntimeError(f"解析目录不存在: {parsed_dir}")
 
         md_path = rename_full_md_to_pdf_name(parsed_dir, pdf_path.stem, yes=yes)
 
+        # 原文格式化：regex + prettier 并行
+        format_tasks: list[asyncio.Task[bool]] = []
         if (
             not skip_formatting
             and format_rules_file
             and MARKDOWN_FORMATTER_AVAILABLE
         ):
-            format_markdown_file(md_path, format_rules_file)
-
+            logger.info("步骤 2: 格式化原始 Markdown")
+            format_tasks.append(
+                asyncio.create_task(
+                    async_format_markdown_file(md_path, format_rules_file)
+                )
+            )
         if not skip_prettier:
-            format_with_prettier(md_path)
+            logger.info("步骤 2b: Prettier 格式化")
+            format_tasks.append(
+                asyncio.create_task(async_format_with_prettier(md_path))
+            )
+        if format_tasks:
+            await asyncio.gather(*format_tasks, return_exceptions=True)
 
         trans_path: Path | None = None
         if not skip_translation:
-            trans_path = translate_md(
+            trans_path = await async_translate_md(
                 md_path,
                 ask_llm_dir or get_ask_llm_dir(),
                 prompt_file,
                 quiet=quiet,
                 use_tty=use_tty,
+                no_stream_api=no_stream_api,
+                cache=cache,
+                cache_salt=cache_salt,
             )
+            trans_format_tasks: list[asyncio.Task[bool]] = []
             if (
                 trans_path
                 and not skip_formatting
                 and format_rules_file
                 and MARKDOWN_FORMATTER_AVAILABLE
             ):
-                format_markdown_file(trans_path, format_rules_file)
+                logger.info("步骤 4: 格式化翻译后的 Markdown")
+                trans_format_tasks.append(
+                    asyncio.create_task(
+                        async_format_markdown_file(trans_path, format_rules_file)
+                    )
+                )
             if trans_path and not skip_prettier:
-                format_with_prettier(trans_path)
+                trans_format_tasks.append(
+                    asyncio.create_task(async_format_with_prettier(trans_path))
+                )
+            if trans_format_tasks:
+                await asyncio.gather(*trans_format_tasks, return_exceptions=True)
 
         if not skip_cleanup:
             cleanup_and_organize_pdf(
@@ -179,3 +220,34 @@ def process_single_pdf(
         logger.error(f"✗ PDF 处理失败: {e}")
 
     return result
+
+
+def process_single_pdf(
+    pdf_path: Path,
+    output_dir: Path,
+    ask_llm_dir: Path | None,
+    prompt_file: str,
+    format_rules_file: Path | None,
+    skip_translation: bool,
+    skip_formatting: bool,
+    skip_prettier: bool,
+    skip_cleanup: bool,
+    yes: bool,
+    quiet: bool,
+) -> dict:
+    """同步包装 :func:`async_process_single_pdf`，保持向后兼容。"""
+    return asyncio.run(
+        async_process_single_pdf(
+            pdf_path=pdf_path,
+            output_dir=output_dir,
+            ask_llm_dir=ask_llm_dir,
+            prompt_file=prompt_file,
+            format_rules_file=format_rules_file,
+            skip_translation=skip_translation,
+            skip_formatting=skip_formatting,
+            skip_prettier=skip_prettier,
+            skip_cleanup=skip_cleanup,
+            yes=yes,
+            quiet=quiet,
+        )
+    )

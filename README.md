@@ -38,6 +38,16 @@ paper_pipeline/
 
 ## 版本变更
 
+- **v0.4.0**
+  - 核心性能优化：
+    - `paper-pipeline` 内部全面异步化，单篇论文的格式化/翻译步骤可并行执行；批量模式从 `ThreadPoolExecutor` 改为 `asyncio.Semaphore` 并发，单线程内更高效调度网络/子进程等待。
+    - 新增按内容哈希的翻译结果缓存（默认开启，可用 `--no-translation-cache` 关闭；`--clear-translation-cache` 清空），重复运行同一篇论文时避免重复调用 API。
+    - `arxiv2md-beta`：IR HTML 路径图像处理改为异步并行；HTML 与 API 元数据并行获取；复用共享 `httpx.AsyncClient`；新增 `--skip-pdf-download` 选项，默认跳过 PDF 下载以显著提速。
+    - `ask_llm`：新增 `--no-stream-api` 选项（`paper-pipeline` 默认启用非流式 API），降低批量翻译 overhead；缓存 `tiktoken` encoding；新增全局 provider/model 级同步速率限制器；默认并发从 32 降至 12，减少 429 退避。
+    - `arxiv2md-beta` IR builder 直接复用 `ParsedArxivHtml` 对象，避免完整 HTML 被 BeautifulSoup 重复解析。
+  - 新增 CLI 参数：`--download-pdf`、`--stream-api`、`--translation-cache/--no-translation-cache`、`--cache-salt`、`--clear-translation-cache`。
+  - 统一版本号：`paper-pipeline 0.4.0`、`arxiv2md-beta 0.11.0`、`ask_llm 2.8.0`。
+
 - **v0.3.1**
   - 将 `arxiv2md-beta` 与 `ask_llm` 的默认输出命名改为当前 `paper-pipeline` 要求：`arxiv2md-beta` 默认 `naming_scheme: paper-pipeline`，`ask_llm` 默认 `translated_suffix: _trans`。
   - 原 `classic` 命名与 `_translated` 后缀仍可通过 `--naming-scheme classic` / `--translated-suffix _translated` 显式启用。
@@ -132,8 +142,13 @@ paper-pipeline "https://example.com/paper.pdf" -o ./output
 - `--skip-translation`：跳过翻译
 - `--skip-formatting`：跳过 regex 格式化
 - `--skip-prettier`：跳过 prettier
-- `-T, --threads`：arXiv 并发数
+- `-T, --threads`：arXiv 并发数（默认 3）
 - `--no-arxiv-progress`：传给 `arxiv2md-beta` 关闭进度条
+- `--download-pdf`：下载 arXiv PDF（默认跳过，可显著提速）
+- `--stream-api`：强制 `ask-llm` 使用流式 API（默认非流式，批量更快）
+- `--translation-cache / --no-translation-cache`：启用/禁用翻译缓存（默认开启）
+- `--cache-salt`：翻译缓存盐值，更换模型时用于失效旧缓存
+- `--clear-translation-cache`：清空翻译缓存后退出
 - `-v, --verbose` / `-q, --quiet`：日志级别
 
 ## 外部依赖定位策略

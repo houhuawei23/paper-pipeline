@@ -1,11 +1,13 @@
-"""Paper pipeline CLI."""
+"""Paper pipeline CLI.
+
+批量 arXiv 处理基于 asyncio 并发，单线程内高效调度网络/子进程等待。
+"""
 
 from __future__ import annotations
 
 import asyncio
 import importlib.util
 import shutil
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -13,9 +15,13 @@ from urllib.parse import urlparse
 import typer
 from loguru import logger
 
-from paper_pipeline.arxiv_flow import default_arxiv2md_cwd, process_single_arxiv_paper
+from paper_pipeline.arxiv_flow import (
+    async_process_single_arxiv_paper,
+    default_arxiv2md_cwd,
+)
 from paper_pipeline.logging_setup import configure_pipeline_logging
-from paper_pipeline.pdf_flow import process_single_pdf
+from paper_pipeline.pdf_flow import async_process_single_pdf
+from paper_pipeline.translation_cache import TranslationCache
 from paper_pipeline.utils import build_pdf_output_dir_name, get_ask_llm_dir
 from paper_pipeline.validation import detect_input_type, parse_arxiv_ids
 
@@ -49,6 +55,52 @@ async def _download_pdf_from_url(url: str, dest_dir: Path) -> Path:
 
     logger.info(f"已下载 PDF: {dest_path}")
     return dest_path
+
+
+async def _process_arxiv_batch(
+    arxiv_ids: list[str],
+    *,
+    out_dir: Path,
+    arxiv2md_cwd: Path | None,
+    ask_root: Path | None,
+    prompt_file: str,
+    format_rules_path: Path | None,
+    skip_translation: bool,
+    skip_formatting: bool,
+    skip_prettier: bool,
+    quiet: bool,
+    arxiv2md_extra: list[str],
+    no_arxiv_progress: bool,
+    no_stream_api: bool,
+    cache: TranslationCache | None,
+    cache_salt: str,
+    max_concurrency: int,
+) -> list[dict]:
+    """使用 asyncio.Semaphore 限制并发地处理一批 arXiv ID。"""
+    semaphore = asyncio.Semaphore(max(1, max_concurrency))
+
+    async def _one(aid: str) -> dict:
+        async with semaphore:
+            return await async_process_single_arxiv_paper(
+                arxiv_id=aid,
+                base_output_dir=out_dir,
+                arxiv2md_beta_dir=arxiv2md_cwd,
+                ask_llm_dir=ask_root,
+                prompt_file=prompt_file,
+                format_rules_file=format_rules_path,
+                skip_translation=skip_translation,
+                skip_formatting=skip_formatting,
+                skip_prettier=skip_prettier,
+                quiet=quiet,
+                arxiv2md_extra=arxiv2md_extra,
+                parallel_worker=max_concurrency > 1,
+                no_arxiv_progress=no_arxiv_progress,
+                no_stream_api=no_stream_api,
+                cache=cache,
+                cache_salt=cache_salt,
+            )
+
+    return list(await asyncio.gather(*[_one(aid) for aid in arxiv_ids]))
 
 
 def main(
@@ -93,7 +145,7 @@ def main(
         "--format-rules",
         help="Markdown 正则格式化规则",
     ),
-    threads: int = typer.Option(1, "--threads", "-T", help="arXiv 批量并发数"),
+    threads: int = typer.Option(3, "--threads", "-T", help="arXiv 批量并发数"),
     skip_translation: bool = typer.Option(False, "--skip-translation"),
     skip_formatting: bool = typer.Option(False, "--skip-formatting"),
     skip_prettier: bool = typer.Option(False, "--skip-prettier"),
@@ -108,6 +160,31 @@ def main(
         "--no-arxiv-progress",
         help="向 arxiv2md-beta 传入 --no-progress（减少 tqdm，适合 TTY 单篇）",
     ),
+    download_pdf: bool = typer.Option(
+        False,
+        "--download-pdf",
+        help="下载 arXiv PDF 到输出目录（默认跳过，可显著提速）",
+    ),
+    stream_api: bool = typer.Option(
+        False,
+        "--stream-api",
+        help="强制 ask-llm 使用流式 API（默认非流式，批量更快）",
+    ),
+    translation_cache: bool = typer.Option(
+        True,
+        "--translation-cache/--no-translation-cache",
+        help="启用/禁用按内容哈希的翻译结果缓存",
+    ),
+    cache_salt: Optional[str] = typer.Option(
+        None,
+        "--cache-salt",
+        help="翻译缓存盐值；更换模型/provider 时修改以失效旧缓存",
+    ),
+    clear_translation_cache: bool = typer.Option(
+        False,
+        "--clear-translation-cache",
+        help="清空翻译缓存后退出",
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="DEBUG 日志"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="仅 ERROR"),
 ) -> None:
@@ -118,8 +195,23 @@ def main(
     if parser not in ("html", "latex"):
         typer.echo("--parser 须为 html 或 latex", err=True)
         raise typer.Exit(2)
+    if threads < 1:
+        typer.echo("--threads 须 ≥ 1", err=True)
+        raise typer.Exit(2)
 
     configure_pipeline_logging(verbose=verbose, quiet=quiet)
+
+    cache: TranslationCache | None = None
+    if translation_cache:
+        cache = TranslationCache()
+    if clear_translation_cache:
+        if cache is None:
+            cache = TranslationCache()
+        removed = cache.clear()
+        logger.info(f"已清空翻译缓存: {removed} 个文件")
+        raise typer.Exit(0)
+
+    effective_cache_salt = cache_salt or "default"
 
     input_type = detect_input_type(input_value)
     arxiv2md_cwd = default_arxiv2md_cwd()
@@ -163,53 +255,32 @@ def main(
             arxiv2md_extra.append("--remove-toc")
         if remove_inline_citations:
             arxiv2md_extra.append("--remove-inline-citations")
+        if not download_pdf:
+            arxiv2md_extra.append("--skip-pdf-download")
 
         # 并行模式下必须关闭 arxiv2md-beta 的进度条，避免多进程 TUI 冲突
         force_no_arxiv_progress = no_arxiv_progress or threads > 1
 
-        results: list[dict] = []
-        if threads == 1:
-            for aid in arxiv_ids:
-                results.append(
-                    process_single_arxiv_paper(
-                        arxiv_id=aid,
-                        base_output_dir=out_dir,
-                        arxiv2md_beta_dir=arxiv2md_cwd,
-                        ask_llm_dir=ask_root,
-                        prompt_file=prompt_file,
-                        format_rules_file=format_rules_path,
-                        skip_translation=skip_translation,
-                        skip_formatting=skip_formatting,
-                        skip_prettier=skip_prettier,
-                        quiet=quiet,
-                        arxiv2md_extra=arxiv2md_extra,
-                        parallel_worker=False,
-                        no_arxiv_progress=force_no_arxiv_progress,
-                    )
-                )
-        else:
-            with ThreadPoolExecutor(max_workers=threads) as ex:
-                futs = {
-                    ex.submit(
-                        process_single_arxiv_paper,
-                        arxiv_id=aid,
-                        base_output_dir=out_dir,
-                        arxiv2md_beta_dir=arxiv2md_cwd,
-                        ask_llm_dir=ask_root,
-                        prompt_file=prompt_file,
-                        format_rules_file=format_rules_path,
-                        skip_translation=skip_translation,
-                        skip_formatting=skip_formatting,
-                        skip_prettier=skip_prettier,
-                        quiet=True,
-                        arxiv2md_extra=arxiv2md_extra,
-                        parallel_worker=True,
-                        no_arxiv_progress=force_no_arxiv_progress,
-                    ): aid
-                    for aid in arxiv_ids
-                }
-                for fut in as_completed(futs):
-                    results.append(fut.result())
+        results = asyncio.run(
+            _process_arxiv_batch(
+                arxiv_ids,
+                out_dir=out_dir,
+                arxiv2md_cwd=arxiv2md_cwd,
+                ask_root=ask_root,
+                prompt_file=prompt_file,
+                format_rules_path=format_rules_path,
+                skip_translation=skip_translation,
+                skip_formatting=skip_formatting,
+                skip_prettier=skip_prettier,
+                quiet=quiet,
+                arxiv2md_extra=arxiv2md_extra,
+                no_arxiv_progress=force_no_arxiv_progress,
+                no_stream_api=not stream_api,
+                cache=cache,
+                cache_salt=effective_cache_salt,
+                max_concurrency=threads,
+            )
+        )
 
         ok = [r for r in results if r["success"]]
         logger.info(f"\n成功: {len(ok)}/{len(results)}")
@@ -233,7 +304,9 @@ def main(
             base = Path(output).resolve() if output else Path.cwd()
             download_dir = base.parent if base.suffix.lower() == ".pdf" else base
             download_dir.mkdir(parents=True, exist_ok=True)
-            pdf_path = asyncio.run(_download_pdf_from_url(input_value.strip(), download_dir))
+            pdf_path = asyncio.run(
+                _download_pdf_from_url(input_value.strip(), download_dir)
+            )
         else:
             pdf_path = Path(input_value).resolve()
             if not pdf_path.is_file():
@@ -242,7 +315,9 @@ def main(
 
         if output:
             base_out = Path(output).resolve()
-            base_out = base_out.parent if base_out.suffix.lower() == ".pdf" else base_out
+            base_out = (
+                base_out.parent if base_out.suffix.lower() == ".pdf" else base_out
+            )
         else:
             base_out = pdf_path.parent
 
@@ -250,25 +325,30 @@ def main(
             pdf_path.stem, source=source, short=short
         )
 
-        format_rules_path: Optional[Path] = None
+        format_rules_path = None
         if not skip_formatting:
             for c in (Path.cwd() / format_rules, Path(format_rules)):
                 if c.exists():
                     format_rules_path = c
                     break
 
-        res = process_single_pdf(
-            pdf_path=pdf_path,
-            output_dir=pdf_out,
-            ask_llm_dir=ask_root,
-            prompt_file=prompt_file,
-            format_rules_file=format_rules_path,
-            skip_translation=skip_translation,
-            skip_formatting=skip_formatting,
-            skip_prettier=skip_prettier,
-            skip_cleanup=skip_cleanup,
-            yes=yes,
-            quiet=quiet,
+        res = asyncio.run(
+            async_process_single_pdf(
+                pdf_path=pdf_path,
+                output_dir=pdf_out,
+                ask_llm_dir=ask_root,
+                prompt_file=prompt_file,
+                format_rules_file=format_rules_path,
+                skip_translation=skip_translation,
+                skip_formatting=skip_formatting,
+                skip_prettier=skip_prettier,
+                skip_cleanup=skip_cleanup,
+                yes=yes,
+                quiet=quiet,
+                no_stream_api=not stream_api,
+                cache=cache,
+                cache_salt=effective_cache_salt,
+            )
         )
         if not res["success"]:
             logger.error(res.get("error", "未知错误"))
@@ -281,4 +361,3 @@ def main(
 def app() -> None:
     """Console script entrypoint."""
     typer.run(main)
-

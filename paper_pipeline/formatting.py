@@ -57,3 +57,17 @@ def format_with_prettier(md_path: Path) -> bool:
         except (FileNotFoundError, subprocess.TimeoutExpired):
             continue
     return False
+
+
+async def async_format_markdown_file(md_path: Path, rules_file: Path) -> bool:
+    """异步包装 :func:`format_markdown_file`，在默认线程池中执行。"""
+    import asyncio
+
+    return await asyncio.to_thread(format_markdown_file, md_path, rules_file)
+
+
+async def async_format_with_prettier(md_path: Path) -> bool:
+    """异步包装 :func:`format_with_prettier`，在默认线程池中执行。"""
+    import asyncio
+
+    return await asyncio.to_thread(format_with_prettier, md_path)
