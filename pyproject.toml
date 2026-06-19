@@ -1,6 +1,6 @@
 [project]
 name = "paper-pipeline"
-version = "0.2.1"
+version = "0.3.0"
 description = "论文处理流水线：支持 arXiv / PDF 的解析、翻译与格式化"
 readme = "README.md"
 requires-python = ">=3.10"

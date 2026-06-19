@@ -38,6 +38,12 @@ paper_pipeline/
 
 ## 版本变更
 
+- **v0.3.0**
+  - arXiv 输出目录与文件命名改为 `Arxiv-<date>-<title>` 方案，内部 Markdown 固定为 `paper.md` / `Appendix.md` / `References.md`，翻译产物固定为 `*_trans.md`，PDF 命名为 `<目录名>.pdf`。
+  - 通过向 `arxiv2md-beta` 传递 `--naming-scheme paper-pipeline`、向 `ask-llm trans` 传递 `--translated-suffix _trans` 直接生成目标文件名，移除流水线中的事后 rename 逻辑。
+  - 依赖包同步更新：`arxiv2md-beta` 新增 `--naming-scheme` 参数，`ask-llm` 新增 `--translated-suffix` 参数。
+  - 统一 `__init__.py` 与 `pyproject.toml` 的版本号为 `0.3.0`。
+
 - **v0.2.1**
   - 修复 `validation.detect_input_type` 对带版本号 ID（如 `2501.11120v2`）的处理逻辑。
   - 修复 `--no-arxiv-progress` 在并行或显式指定时可能重复传入 `--no-progress` 的问题。
