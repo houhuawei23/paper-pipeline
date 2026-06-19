@@ -38,6 +38,11 @@ paper_pipeline/
 
 ## 版本变更
 
+- **v0.3.1**
+  - 将 `arxiv2md-beta` 与 `ask_llm` 的默认输出命名改为当前 `paper-pipeline` 要求：`arxiv2md-beta` 默认 `naming_scheme: paper-pipeline`，`ask_llm` 默认 `translated_suffix: _trans`。
+  - 原 `classic` 命名与 `_translated` 后缀仍可通过 `--naming-scheme classic` / `--translated-suffix _translated` 显式启用。
+  - 统一 `__init__.py` 与 `pyproject.toml` 的版本号为 `0.3.1`。
+
 - **v0.3.0**
   - arXiv 输出目录与文件命名改为 `Arxiv-<date>-<title>` 方案，内部 Markdown 固定为 `paper.md` / `Appendix.md` / `References.md`，翻译产物固定为 `*_trans.md`，PDF 命名为 `<目录名>.pdf`。
   - 通过向 `arxiv2md-beta` 传递 `--naming-scheme paper-pipeline`、向 `ask-llm trans` 传递 `--translated-suffix _trans` 直接生成目标文件名，移除流水线中的事后 rename 逻辑。
