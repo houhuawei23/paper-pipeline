@@ -220,7 +220,10 @@ def process_single_arxiv_paper(
 
         trans_file: Path | None = None
         if not skip_translation:
-            logger.info(f"[{arxiv_id}] 步骤 3: 翻译正文 Markdown")
+            logger.info(
+                f"[{arxiv_id}] 步骤 3: 翻译正文 Markdown"
+                + "（标题、作者、ArXiv 等元数据一同交给 ask-llm trans 翻译）"
+            )
             trans_file = translate_md(
                 md_file,
                 ask_llm_dir,

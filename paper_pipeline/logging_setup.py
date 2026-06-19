@@ -54,7 +54,7 @@ def _default_log_file() -> Path:
     )
     log_dir = xdg_state_home / "paper-pipeline-beta" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y-%m-%d")
+    stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     return log_dir / f"paper-pipeline-beta-{stamp}.log"
 
 

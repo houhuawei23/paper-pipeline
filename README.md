@@ -32,8 +32,17 @@ paper_pipeline/
 ├── process_paper_pipeline_beta.py   # 向后兼容脚本入口（转发到包内 CLI）
 ├── tests/
 ├── pyproject.toml
-└── README.md
+├── README.md
+└── CONTRIBUTORS.md
 ```
+
+## 版本变更
+
+- **v0.2.0**
+  - arXiv 论文翻译时，标题、作者、ArXiv 等元数据不再被单独提取保留，而是与正文一起交给 `ask-llm trans` 翻译。
+  - 移除 `paper_pipeline/preamble_split.py` 及相关测试。
+  - 日志文件名增加时分秒，避免同一天多次运行覆盖。
+  - PDF 流程优先复用已存在的 `{stem}.md`，减少重复重命名。
 
 ## 环境要求
 
@@ -138,6 +147,10 @@ python process_paper_pipeline_beta.py --help
 2. 在 README 中明确“本项目依赖外部工具”。
 3. 附带最小可运行示例与参数说明。
 4. 若对外开源，建议补充 `LICENSE` 与 `CONTRIBUTING.md`。
+
+## Contributors
+
+参见 [CONTRIBUTORS.md](CONTRIBUTORS.md)。
 
 ## License
 

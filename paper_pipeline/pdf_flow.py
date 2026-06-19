@@ -49,10 +49,13 @@ def parse_pdf_with_mineru(pdf_path: Path, *, quiet: bool) -> Path:
 def rename_full_md_to_pdf_name(
     parsed_dir: Path, pdf_stem: str, yes: bool = False
 ) -> Path:
+    target = parsed_dir / f"{pdf_stem}.md"
+    if target.exists():
+        return target
+
     full_md = parsed_dir / "full.md"
     if not full_md.exists():
         raise FileNotFoundError(f"未找到 full.md: {full_md}")
-    target = parsed_dir / f"{pdf_stem}.md"
     if target.exists() and target != full_md and not yes:
         logger.warning(f"目标已存在: {target}，跳过重命名")
         return full_md
