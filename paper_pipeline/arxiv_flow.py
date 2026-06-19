@@ -51,7 +51,7 @@ def translate_md(
     quiet: bool,
     use_tty: bool,
 ) -> Path | None:
-    """调用 ask-llm trans。"""
+    """调用 ask-llm trans，直接生成 *_trans.md。"""
     cwd: Path | None = ask_llm_dir or get_ask_llm_dir()
     if cwd is None:
         return None
@@ -64,6 +64,8 @@ def translate_md(
         "-p",
         prompt_file,
         "-f",
+        "--translated-suffix",
+        "_trans",
     ]
     if not use_tty:
         cmd.append("--stream")
@@ -76,11 +78,8 @@ def translate_md(
     ).returncode
     if rc != 0:
         return None
-    for name in (f"{md_path.stem}_translated.md", f"{md_path.stem}_trans.md"):
-        p = md_path.parent / name
-        if p.exists():
-            return p
-    return None
+    expected = md_path.parent / f"{md_path.stem}_trans.md"
+    return expected if expected.exists() else None
 
 
 def process_single_arxiv_paper(
@@ -117,6 +116,9 @@ def process_single_arxiv_paper(
         logger.info(f"开始处理: {arxiv_id}")
 
         extra = list(arxiv2md_extra)
+        if "--naming-scheme" not in extra:
+            extra.append("--naming-scheme")
+            extra.append("paper-pipeline")
         if no_arxiv_progress and "--no-progress" not in extra:
             extra.append("--no-progress")
         # 始终发出 JSON 行 + 侧车文件；子进程 stdout/stderr 捕获解析，避免 TTY 下无法解析目录
@@ -164,33 +166,29 @@ def process_single_arxiv_paper(
         result["output_dir"] = output_dir
         logger.info(f"[{arxiv_id}] 找到输出目录: {output_dir.name}")
 
-        md_files = [
-            f
-            for f in output_dir.glob("*.md")
-            if not f.name.endswith("_trans.md")
-            and not f.name.endswith("_translated.md")
-        ]
-        if not md_files:
-            raise RuntimeError("未找到 Markdown 文件")
-
-        main_candidates = [
-            f
-            for f in md_files
-            if not f.name.endswith("-References.md")
-            and not f.name.endswith("-Appendix.md")
-        ]
-        if main_candidates:
+        # 新命名方案下，arxiv2md-beta 固定输出 paper.md / Appendix.md / References.md
+        md_file = output_dir / "paper.md"
+        if not md_file.is_file():
+            # 兼容旧命名或非常规输出的兜底查找
+            md_files = [
+                f
+                for f in output_dir.glob("*.md")
+                if not f.name.endswith("_trans.md")
+                and not f.name.endswith("_translated.md")
+                and not f.name.endswith("-References.md")
+                and not f.name.endswith("-Appendix.md")
+            ]
+            if not md_files:
+                raise RuntimeError("未找到 Markdown 文件")
             md_file = (
-                main_candidates[0]
-                if len(main_candidates) == 1
-                else max(main_candidates, key=lambda p: p.stat().st_mtime)
+                md_files[0]
+                if len(md_files) == 1
+                else max(md_files, key=lambda p: p.stat().st_mtime)
             )
-        else:
-            md_file = md_files[0]
-        if " " in md_file.name:
-            new_path = md_file.parent / md_file.name.replace(" ", "-")
-            md_file.rename(new_path)
-            md_file = new_path
+            if " " in md_file.name:
+                new_path = md_file.parent / md_file.name.replace(" ", "-")
+                md_file.rename(new_path)
+                md_file = new_path
 
         if (
             not skip_formatting
@@ -204,8 +202,8 @@ def process_single_arxiv_paper(
             logger.info(f"[{arxiv_id}] 步骤 2b: Prettier 格式化")
             format_with_prettier(md_file)
 
-        # arxiv2md-beta：{basename}-Appendix.md 与正文分开；仅格式化附录源文件，不翻译 -References.md
-        appendix_md = md_file.parent / f"{md_file.stem}-Appendix.md"
+        # arxiv2md-beta：Appendix.md 与正文分开；仅格式化附录源文件，不翻译 References.md
+        appendix_md = md_file.parent / "Appendix.md"
         if appendix_md.is_file():
             if (
                 not skip_formatting
@@ -241,12 +239,6 @@ def process_single_arxiv_paper(
                     format_markdown_file(trans_file, format_rules_file)
                 if not skip_prettier:
                     format_with_prettier(trans_file)
-                if trans_file.name.endswith("_translated.md"):
-                    new_path = trans_file.parent / f"{md_file.stem}_trans.md"
-                    if new_path.exists() and new_path != trans_file:
-                        new_path.unlink()
-                    trans_file.rename(new_path)
-                    trans_file = new_path
 
             if appendix_md.is_file():
                 logger.info(f"[{arxiv_id}] 步骤 3b: 翻译附录 Markdown")
@@ -267,11 +259,6 @@ def process_single_arxiv_paper(
                         format_markdown_file(trans_appendix, format_rules_file)
                     if not skip_prettier:
                         format_with_prettier(trans_appendix)
-                    if trans_appendix.name.endswith("_translated.md"):
-                        new_app = trans_appendix.parent / f"{appendix_md.stem}_trans.md"
-                        if new_app.exists() and new_app != trans_appendix:
-                            new_app.unlink()
-                        trans_appendix.rename(new_app)
 
         result["success"] = True
         logger.info(f"[{arxiv_id}] ✓ 处理完成: {output_dir}")

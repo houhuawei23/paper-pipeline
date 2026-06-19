@@ -13,7 +13,7 @@ _OUTPUT_DIR_LOG = re.compile(
     r"Output directory:\s*(.+?)\s*$",
     re.IGNORECASE,
 )
-_DATE_PREFIX = re.compile(r"^\d{8}-")
+_DATE_PREFIX = re.compile(r"^([^-]+-)?\d{8}-")
 _NEW_STYLE_ID = re.compile(r"^(\d{4}\.\d{4,5})(v\d+)?$")
 
 
