@@ -20,7 +20,7 @@ def detect_input_type(input_str: str) -> str:
     p = Path(s)
     if p.exists() and p.is_file() and p.suffix.lower() == ".pdf":
         return "pdf_path"
-    core = s.replace("v", "").split("v")[0] if "v" in s else s
+    core = s.split("v")[0] if "v" in s else s
     if ARXIV_ID_PATTERN.match(core):
         return "arxiv"
     if LEGACY_ARXIV_ID_PATTERN.match(core):

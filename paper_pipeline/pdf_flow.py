@@ -56,9 +56,6 @@ def rename_full_md_to_pdf_name(
     full_md = parsed_dir / "full.md"
     if not full_md.exists():
         raise FileNotFoundError(f"未找到 full.md: {full_md}")
-    if target.exists() and target != full_md and not yes:
-        logger.warning(f"目标已存在: {target}，跳过重命名")
-        return full_md
     full_md.rename(target)
     return target
 

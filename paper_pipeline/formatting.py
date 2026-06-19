@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 _tools_dir = Path(__file__).resolve().parent.parent.parent / "tools"
-if str(_tools_dir) not in sys.path:
+if _tools_dir.is_dir() and str(_tools_dir) not in sys.path:
     sys.path.insert(0, str(_tools_dir))
 
 try:

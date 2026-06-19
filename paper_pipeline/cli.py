@@ -164,6 +164,9 @@ def main(
         if remove_inline_citations:
             arxiv2md_extra.append("--remove-inline-citations")
 
+        # 并行模式下必须关闭 arxiv2md-beta 的进度条，避免多进程 TUI 冲突
+        force_no_arxiv_progress = no_arxiv_progress or threads > 1
+
         results: list[dict] = []
         if threads == 1:
             for aid in arxiv_ids:
@@ -181,7 +184,7 @@ def main(
                         quiet=quiet,
                         arxiv2md_extra=arxiv2md_extra,
                         parallel_worker=False,
-                        no_arxiv_progress=no_arxiv_progress,
+                        no_arxiv_progress=force_no_arxiv_progress,
                     )
                 )
         else:
@@ -201,7 +204,7 @@ def main(
                         quiet=True,
                         arxiv2md_extra=arxiv2md_extra,
                         parallel_worker=True,
-                        no_arxiv_progress=True,
+                        no_arxiv_progress=force_no_arxiv_progress,
                     ): aid
                     for aid in arxiv_ids
                 }

@@ -38,6 +38,14 @@ paper_pipeline/
 
 ## 版本变更
 
+- **v0.2.1**
+  - 修复 `validation.detect_input_type` 对带版本号 ID（如 `2501.11120v2`）的处理逻辑。
+  - 修复 `--no-arxiv-progress` 在并行或显式指定时可能重复传入 `--no-progress` 的问题。
+  - 清理 `pdf_flow.rename_full_md_to_pdf_name` 中的不可达分支。
+  - `formatting.py` 仅在 `tools/` 目录存在时才将其加入 `sys.path`，避免已安装包环境下的副作用。
+  - 统一 `__init__.py` 与 `pyproject.toml` 的版本号为 `0.2.1`。
+  - 补充 `validation` 模块的边界测试用例。
+
 - **v0.2.0**
   - arXiv 论文翻译时，标题、作者、ArXiv 等元数据不再被单独提取保留，而是与正文一起交给 `ask-llm trans` 翻译。
   - 移除 `paper_pipeline/preamble_split.py` 及相关测试。

@@ -117,7 +117,7 @@ def process_single_arxiv_paper(
         logger.info(f"开始处理: {arxiv_id}")
 
         extra = list(arxiv2md_extra)
-        if no_arxiv_progress:
+        if no_arxiv_progress and "--no-progress" not in extra:
             extra.append("--no-progress")
         # 始终发出 JSON 行 + 侧车文件；子进程 stdout/stderr 捕获解析，避免 TTY 下无法解析目录
         extra.append("--emit-result-json")

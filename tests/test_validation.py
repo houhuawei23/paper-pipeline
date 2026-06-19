@@ -19,7 +19,10 @@ from paper_pipeline.validation import detect_input_type  # noqa: E402
     [
         ("2501.11120", "arxiv"),
         ("2501.11120v2", "arxiv"),
+        ("cs/0112017v1", "arxiv"),
+        ("math.CO/0602026", "arxiv"),
         ("/abs/2501.11120.pdf", "unknown"),
+        ("not-an-id", "unknown"),
     ],
 )
 def test_detect_input_type(raw: str, expected: str) -> None:
