@@ -133,6 +133,10 @@ async def async_translate_md(
         log_component=None if quiet else "ask-llm",
     )
     if rc.returncode != 0:
+        err_detail = (rc.stdout or "").strip() or "未知错误"
+        logger.error(
+            f"[{md_path.name}] ask-llm trans 失败 (返回码 {rc.returncode}): {err_detail}"
+        )
         return None
 
     # 写入缓存
@@ -361,6 +365,12 @@ async def async_process_single_arxiv_paper(
             trans_file = await body_trans_task
             if appendix_format_task is not None:
                 await appendix_format_task
+
+            if trans_file is None:
+                raise RuntimeError(
+                    "正文 Markdown 翻译失败，未生成 *_trans.md；"
+                    "常见原因：API 密钥未设置、网络不可达或 ask-llm 配置错误。"
+                )
 
             if trans_file:
                 # 正文译文格式化（regex + prettier 并行）

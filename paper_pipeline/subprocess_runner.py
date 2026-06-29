@@ -66,15 +66,18 @@ def run_external_command(
 
     try:
         if quiet:
-            rc = subprocess.run(
+            # 静默模式仍捕获输出，但仅在失败时返回，便于定位错误原因
+            result = subprocess.run(
                 cmd_list,
                 cwd=cwd_s,
                 env=child_env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 check=False,
-            ).returncode
-            return ExternalCommandResult(returncode=rc, stdout=None)
+                text=True,
+            )
+            stdout = result.stdout if result.returncode != 0 else None
+            return ExternalCommandResult(returncode=result.returncode, stdout=stdout)
 
         if use_inherit:
             rc = subprocess.call(cmd_list, cwd=cwd_s, env=child_env)
